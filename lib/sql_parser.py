@@ -2,9 +2,18 @@ import sqlglot
 from sqlglot import exp
 
 
-# dialect variable
+
+SET_OP_NAMES = {
+    exp.Union: "union",
+    exp.Except: "except",
+    exp.Intersect: "intersect",
+}
+
 
 def describe(tree):
+    if isinstance(tree, exp.SetOperation):
+        return describe_set_operation(tree)
+
     select = tree
     cols = ", ".join(describe_column(c) for c in select.expressions)
     if cols == "*":
@@ -24,6 +33,14 @@ def describe(tree):
     if where:
         sentence += f" where {describe_condition(where.this)}"
 
+    group = select.find(exp.Group)
+    if group:
+        sentence += f" {describe_group(group)}"
+
+    having = select.find(exp.Having)
+    if having:
+        sentence += f" having {describe_condition(having.this)}"
+
     order = select.find(exp.Order)
     if order:
         sentence += f" {describe_order(order)}"
@@ -33,6 +50,31 @@ def describe(tree):
         sentence += f" {describe_limit(limit)}"
 
     return sentence
+
+def unwrap_query(node):
+    return node.this if isinstance(node, exp.Subquery) else node
+
+
+def describe_set_operation(op):
+    left = describe(unwrap_query(op.this))
+    right = describe(unwrap_query(op.expression))
+
+    name = SET_OP_NAMES.get(type(op), "union")
+    if isinstance(op, exp.Union) and op.args.get("distinct") is False:
+        name = "union all"
+
+    sentence = f"{left}, then {name} with {right}"
+
+    order = op.args.get("order")
+    if order:
+        sentence += f" {describe_order(order)}"
+
+    limit = op.args.get("limit")
+    if limit:
+        sentence += f" {describe_limit(limit)}"
+
+    return sentence
+
 
 def describe_condition(cond):
 
@@ -69,6 +111,10 @@ def describe_condition(cond):
 
     elif isinstance(cond, exp.Is):
         return f"{cond.this.sql()} is {cond.expression.sql().lower()}"
+
+def describe_group(group):
+    if isinstance(group, exp.Group):
+        return f", grouped by {', '.join(e.sql() for e in group.expressions)}"
 
 def describe_order(order):
     if isinstance(order, exp.Order):
@@ -119,7 +165,7 @@ def describe_column(col):
 
 
 if __name__ == "__main__":
-    tree = sqlglot.parse_one("SELECT Customers.CustomerName, Orders.OrderID FROM Customers LEFT JOIN Orders ON Customers.CustomerID = Orders.CustomerID ORDER BY Customers.CustomerName;")
+    tree = sqlglot.parse_one("")
 
     print(repr(tree))
 
